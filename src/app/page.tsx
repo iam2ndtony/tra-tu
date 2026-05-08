@@ -151,6 +151,7 @@ export default function Home() {
   const [pauseSeconds, setPauseSeconds] = useState(3);
   const [includeDefinition, setIncludeDefinition] = useState(false);
   const [autoTranslate, setAutoTranslate] = useState(false);
+  const [downloadAll, setDownloadAll] = useState(false);
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -261,80 +262,82 @@ export default function Home() {
   };
 
   const createZip = async () => {
-    if (!selectedGroup) {
-      setStatus('Vui lòng chọn nhóm cần tải về.');
-      return;
-    }
-
-    if (selectedGroup.words.length === 0) {
-      setStatus('Nhóm này chưa có từ nào.');
+    const targets = downloadAll ? groups : (selectedGroup ? [selectedGroup] : []);
+    
+    if (targets.length === 0) {
+      setStatus(downloadAll ? 'Chưa có nhóm nào để tải.' : 'Vui lòng chọn nhóm cần tải.');
       return;
     }
 
     setProcessing(true);
-    setStatus('Đang khởi tạo...');
+    setStatus('Đang bắt đầu...');
     setDownloadUrl(null);
 
     try {
       const zip = new JSZip();
-      const folder = zip.folder(normalizeFileName(selectedGroup.name)) || zip;
-      const allBuffers: AudioBuffer[] = [];
 
-      for (let i = 0; i < selectedGroup.words.length; i++) {
-        const rawWord = selectedGroup.words[i];
-        let wordToSpeak = rawWord;
-        let fileName = rawWord;
-
-        if (autoTranslate) {
-          setStatus(`Đang dịch ${rawWord}...`);
-          const res = await fetch('/api/lookup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ words: [rawWord] }),
-          });
-          const data = await res.json();
-          if (data.results && data.results[0]) {
-            wordToSpeak = data.results[0].split(',')[1] || rawWord; 
-          }
-        }
-
-        setStatus(`Tiến độ: ${i + 1}/${selectedGroup.words.length} - ${rawWord}`);
+      for (const group of targets) {
+        if (group.words.length === 0) continue;
         
-        const wordBlob = await fetchSpeechBlob(wordToSpeak, ttsVoice);
-        const wordBuffer = await decodeAudioBuffer(wordBlob);
-        allBuffers.push(wordBuffer);
-        folder.file(`${normalizeFileName(fileName)}.mp3`, wordBlob);
+        const folder = zip.folder(normalizeFileName(group.name)) || zip;
+        const allBuffers: AudioBuffer[] = [];
 
-        if (includeDefinition) {
-          const res = await fetch('/api/lookup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ words: [rawWord] }),
-          });
-          const data = await res.json();
-          if (data.results && data.results[0]) {
-            const definition = data.results[0].split(',')[1] || '';
-            if (definition) {
-              const defBlob = await fetchSpeechBlob(definition, 'vi-VN');
-              const defBuffer = await decodeAudioBuffer(defBlob);
-              allBuffers.push(defBuffer);
-              folder.file(`${normalizeFileName(fileName)}_definition.mp3`, defBlob);
+        for (let i = 0; i < group.words.length; i++) {
+          const rawWord = group.words[i];
+          let wordToSpeak = rawWord;
+          let fileName = rawWord;
+
+          if (autoTranslate) {
+            setStatus(`${group.name}: Đang dịch ${rawWord}...`);
+            const res = await fetch('/api/lookup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ words: [rawWord] }),
+            });
+            const data = await res.json();
+            if (data.results && data.results[0]) {
+              wordToSpeak = data.results[0].split(',')[1] || rawWord; 
             }
           }
+
+          setStatus(`${group.name}: ${i + 1}/${group.words.length} - ${rawWord}`);
+          
+          const wordBlob = await fetchSpeechBlob(wordToSpeak, ttsVoice);
+          const wordBuffer = await decodeAudioBuffer(wordBlob);
+          allBuffers.push(wordBuffer);
+          folder.file(`${i + 1}. ${normalizeFileName(fileName)}.mp3`, wordBlob);
+
+          if (includeDefinition) {
+            const res = await fetch('/api/lookup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ words: [rawWord] }),
+            });
+            const data = await res.json();
+            if (data.results && data.results[0]) {
+              const definition = data.results[0].split(',')[1] || '';
+              if (definition) {
+                const defBlob = await fetchSpeechBlob(definition, 'vi-VN');
+                const defBuffer = await decodeAudioBuffer(defBlob);
+                allBuffers.push(defBuffer);
+                folder.file(`${i + 1}. ${normalizeFileName(fileName)}_definition.mp3`, defBlob);
+              }
+            }
+          }
+          await delay(300);
         }
-        await delay(300);
+
+        if (allBuffers.length > 0) {
+          const merged = joinAudioBuffers(allBuffers, pauseSeconds);
+          const combinedBlob = audioBufferToWav(merged);
+          folder.file('0. Combined.wav', combinedBlob);
+        }
       }
 
-      if (allBuffers.length > 0) {
-        const merged = joinAudioBuffers(allBuffers, pauseSeconds);
-        const combinedBlob = audioBufferToWav(merged);
-        folder.file('combined.wav', combinedBlob);
-      }
-
-      setStatus('Đang nén file...');
+      setStatus('Đang nén ZIP...');
       const content = await zip.generateAsync({ type: 'blob' });
       setDownloadUrl(URL.createObjectURL(content));
-      setStatus(`Hoàn thành nhóm: ${selectedGroup.name}!`);
+      setStatus('Hoàn thành! Nhấn tải về.');
     } catch (error) {
       console.error(error);
       setStatus('Lỗi khi tạo âm thanh.');
@@ -403,7 +406,6 @@ export default function Home() {
             </div>
           ) : (
             <div className="grid gap-6 lg:grid-cols-[280px_1fr_320px]">
-              {/* Sidebar: Group Navigation */}
               <aside className="space-y-6">
                 <div className="rounded-[32px] border border-white/10 bg-slate-950/50 p-6 shadow-xl backdrop-blur-xl h-fit">
                   <h3 className="text-lg font-semibold mb-4">Danh sách nhóm</h3>
@@ -430,7 +432,6 @@ export default function Home() {
                 </div>
               </aside>
 
-              {/* Center: Word Management */}
               <section className="space-y-6">
                 {selectedGroup ? (
                   <div className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-xl backdrop-blur-xl min-h-[600px]">
@@ -475,7 +476,6 @@ export default function Home() {
                 )}
               </section>
 
-              {/* Right: Settings & Export */}
               <aside className="space-y-6">
                 <div className="rounded-[32px] border border-white/10 bg-slate-950/80 p-6 shadow-2xl backdrop-blur-xl sticky top-6">
                   <h3 className="text-xl font-bold mb-6 text-cyan-400 border-b border-white/10 pb-4">Xuất âm thanh</h3>
@@ -511,15 +511,22 @@ export default function Home() {
                           <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${autoTranslate ? 'left-6' : 'left-1'}`} />
                         </div>
                       </label>
+                      <label className="flex items-center justify-between cursor-pointer group">
+                        <span className="text-sm text-slate-300 font-bold text-cyan-400">Tải tất cả nhóm</span>
+                        <div className={`w-10 h-5 rounded-full transition relative ${downloadAll ? 'bg-cyan-500' : 'bg-slate-700'}`}>
+                          <input type="checkbox" checked={downloadAll} onChange={(e) => setDownloadAll(e.target.checked)} className="hidden" />
+                          <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${downloadAll ? 'left-6' : 'left-1'}`} />
+                        </div>
+                      </label>
                     </div>
 
                     <div className="pt-4 space-y-3">
-                      <button onClick={createZip} disabled={processing || !selectedGroup} className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95 uppercase">
-                        {processing ? 'Đang tạo âm thanh...' : `Tải nhóm: ${selectedGroup?.name || '---'}`}
+                      <button onClick={createZip} disabled={processing || (!downloadAll && !selectedGroup)} className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95 uppercase">
+                        {processing ? 'Đang tạo âm thanh...' : (downloadAll ? 'TẢI TẤT CẢ NHÓM' : `TẢI NHÓM: ${selectedGroup?.name || '---'}`)}
                       </button>
                       
                       {downloadUrl && (
-                        <a href={downloadUrl} download={`${normalizeFileName(selectedGroup?.name || 'audio')}.zip`} className="block text-center w-full bg-white/10 text-white rounded-2xl py-4 text-sm font-bold hover:bg-white/20 transition animate-pulse">
+                        <a href={downloadUrl} download={downloadAll ? "all-groups.zip" : `${normalizeFileName(selectedGroup?.name || 'audio')}.zip`} className="block text-center w-full bg-white/10 text-white rounded-2xl py-4 text-sm font-bold hover:bg-white/20 transition animate-pulse">
                           📥 Click để tải File .ZIP
                         </a>
                       )}
