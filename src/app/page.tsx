@@ -153,7 +153,7 @@ export default function Home() {
   const [autoTranslate, setAutoTranslate] = useState(false);
 
   const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId) || groups[0] || null,
+    () => groups.find((group) => group.id === selectedGroupId) || null,
     [groups, selectedGroupId],
   );
 
@@ -206,7 +206,7 @@ export default function Home() {
         body: JSON.stringify({ words }),
       });
       const data = await response.json();
-
+      
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'bot',
@@ -261,8 +261,13 @@ export default function Home() {
   };
 
   const createZip = async () => {
-    if (groups.length === 0) {
-      setStatus('Vui lòng tạo ít nhất một nhóm.');
+    if (!selectedGroup) {
+      setStatus('Vui lòng chọn nhóm cần tải về.');
+      return;
+    }
+
+    if (selectedGroup.words.length === 0) {
+      setStatus('Nhóm này chưa có từ nào.');
       return;
     }
 
@@ -272,67 +277,64 @@ export default function Home() {
 
     try {
       const zip = new JSZip();
+      const folder = zip.folder(normalizeFileName(selectedGroup.name)) || zip;
+      const allBuffers: AudioBuffer[] = [];
 
-      for (const group of groups) {
-        const folder = zip.folder(normalizeFileName(group.name)) || zip;
-        const allBuffers: AudioBuffer[] = [];
+      for (let i = 0; i < selectedGroup.words.length; i++) {
+        const rawWord = selectedGroup.words[i];
+        let wordToSpeak = rawWord;
+        let fileName = rawWord;
 
-        for (let i = 0; i < group.words.length; i++) {
-          const rawWord = group.words[i];
-          let wordToSpeak = rawWord;
-          let fileName = rawWord;
-
-          if (autoTranslate) {
-            setStatus(`Đang dịch ${rawWord}...`);
-            const res = await fetch('/api/lookup', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ words: [rawWord] }),
-            });
-            const data = await res.json();
-            if (data.results && data.results[0]) {
-              wordToSpeak = data.results[0].split(',')[1] || rawWord;
-            }
+        if (autoTranslate) {
+          setStatus(`Đang dịch ${rawWord}...`);
+          const res = await fetch('/api/lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ words: [rawWord] }),
+          });
+          const data = await res.json();
+          if (data.results && data.results[0]) {
+            wordToSpeak = data.results[0].split(',')[1] || rawWord; 
           }
-
-          setStatus(`Nhóm ${group.name}: ${i + 1}/${group.words.length} - ${rawWord}`);
-
-          const wordBlob = await fetchSpeechBlob(wordToSpeak, ttsVoice);
-          const wordBuffer = await decodeAudioBuffer(wordBlob);
-          allBuffers.push(wordBuffer);
-          folder.file(`${normalizeFileName(fileName)}.mp3`, wordBlob);
-
-          if (includeDefinition) {
-            const res = await fetch('/api/lookup', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ words: [rawWord] }),
-            });
-            const data = await res.json();
-            if (data.results && data.results[0]) {
-              const definition = data.results[0].split(',')[1] || '';
-              if (definition) {
-                const defBlob = await fetchSpeechBlob(definition, 'vi-VN');
-                const defBuffer = await decodeAudioBuffer(defBlob);
-                allBuffers.push(defBuffer);
-                folder.file(`${normalizeFileName(fileName)}_definition.mp3`, defBlob);
-              }
-            }
-          }
-          await delay(300);
         }
 
-        if (allBuffers.length > 0) {
-          const merged = joinAudioBuffers(allBuffers, pauseSeconds);
-          const combinedBlob = audioBufferToWav(merged);
-          folder.file('combined.wav', combinedBlob);
+        setStatus(`Tiến độ: ${i + 1}/${selectedGroup.words.length} - ${rawWord}`);
+        
+        const wordBlob = await fetchSpeechBlob(wordToSpeak, ttsVoice);
+        const wordBuffer = await decodeAudioBuffer(wordBlob);
+        allBuffers.push(wordBuffer);
+        folder.file(`${normalizeFileName(fileName)}.mp3`, wordBlob);
+
+        if (includeDefinition) {
+          const res = await fetch('/api/lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ words: [rawWord] }),
+          });
+          const data = await res.json();
+          if (data.results && data.results[0]) {
+            const definition = data.results[0].split(',')[1] || '';
+            if (definition) {
+              const defBlob = await fetchSpeechBlob(definition, 'vi-VN');
+              const defBuffer = await decodeAudioBuffer(defBlob);
+              allBuffers.push(defBuffer);
+              folder.file(`${normalizeFileName(fileName)}_definition.mp3`, defBlob);
+            }
+          }
         }
+        await delay(300);
+      }
+
+      if (allBuffers.length > 0) {
+        const merged = joinAudioBuffers(allBuffers, pauseSeconds);
+        const combinedBlob = audioBufferToWav(merged);
+        folder.file('combined.wav', combinedBlob);
       }
 
       setStatus('Đang nén file...');
       const content = await zip.generateAsync({ type: 'blob' });
       setDownloadUrl(URL.createObjectURL(content));
-      setStatus('Hoàn thành! Nhấn tải về.');
+      setStatus(`Hoàn thành nhóm: ${selectedGroup.name}!`);
     } catch (error) {
       console.error(error);
       setStatus('Lỗi khi tạo âm thanh.');
@@ -364,7 +366,7 @@ export default function Home() {
                 <div className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-xl backdrop-blur-xl">
                   <h2 className="text-2xl font-semibold mb-6">Tra cứu từ điển</h2>
                   <form onSubmit={handleDictionarySubmit} className="space-y-4">
-                    <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={4} placeholder="Nhập từ cần tra cứu..." className="w-full resize-none rounded-3xl border border-slate-700/80 bg-slate-950/80 px-6 py-4 text-slate-100 outline-none transition focus:border-cyan-400 text-lg" />
+                    <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={4} placeholder="Nhập danh sách từ (xuống dòng hoặc dấu phẩy)..." className="w-full resize-none rounded-3xl border border-slate-700/80 bg-slate-950/80 px-6 py-4 text-slate-100 outline-none transition focus:border-cyan-400 text-lg" />
                     <button type="submit" disabled={loading} className="rounded-full bg-cyan-500 px-10 py-4 font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition shadow-lg shadow-cyan-500/20">{loading ? 'Đang tra...' : 'Tra cứu ngay'}</button>
                   </form>
                 </div>
@@ -382,7 +384,7 @@ export default function Home() {
                       ))}
                     </div>
                   ))}
-                  {messages.length === 0 && <div className="text-center py-20 text-slate-500 italic">Nhập từ ở trên để bắt đầu tra cứu...</div>}
+                  {messages.length === 0 && <div className="text-center py-20 text-slate-500 italic">Nhập danh sách từ ở trên để bắt đầu tra cứu...</div>}
                 </div>
               </section>
               <aside className="space-y-6">
@@ -394,7 +396,7 @@ export default function Home() {
                       <p className="text-xs text-slate-400 mt-1">{selectedGroup.words.length} từ đã lưu</p>
                     </div>
                   ) : (
-                    <p className="text-sm text-slate-500">Vui lòng chọn nhóm trong tab "Quản lý Nhóm".</p>
+                    <p className="text-sm text-slate-500 text-center py-4">Vui lòng chọn nhóm trong tab "Quản lý Nhóm" trước khi thêm từ.</p>
                   )}
                 </div>
               </aside>
@@ -414,15 +416,15 @@ export default function Home() {
                       >
                         <div className="truncate pr-6">{group.name}</div>
                         <div className={`text-[10px] mt-1 ${selectedGroupId === group.id ? 'text-slate-900' : 'text-slate-500'}`}>{group.words.length} từ</div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteGroup(group.id); }}
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); deleteGroup(group.id); }} 
                           className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-red-500/20 transition opacity-0 group-hover:opacity-100`}
                         >🗑️</button>
                       </button>
                     ))}
                     <div className="pt-4 border-t border-white/5 mt-4">
-                      <input value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Nhóm mới..." className="w-full bg-transparent border-b border-slate-700 px-2 py-2 outline-none focus:border-cyan-400 text-sm mb-3" />
-                      <button onClick={createGroup} className="w-full py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold transition">Tạo nhóm mới</button>
+                      <input value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Tên nhóm mới..." className="w-full bg-transparent border-b border-slate-700 px-2 py-2 outline-none focus:border-cyan-400 text-sm mb-3" />
+                      <button onClick={createGroup} className="w-full py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold transition">➕ Tạo nhóm</button>
                     </div>
                   </div>
                 </div>
@@ -435,15 +437,15 @@ export default function Home() {
                     <div className="flex justify-between items-end mb-8">
                       <div>
                         <h2 className="text-3xl font-bold text-white">{selectedGroup.name}</h2>
-                        <p className="text-slate-400 mt-2">Quản lý danh sách từ và âm thanh</p>
+                        <p className="text-slate-400 mt-2">Danh sách từ vựng hiện tại</p>
                       </div>
                     </div>
 
                     <div className="mb-8">
-                      <p className="text-sm font-semibold mb-3 text-slate-300">Thêm từ nhanh</p>
+                      <p className="text-sm font-semibold mb-3 text-slate-300">Thêm nhanh (Xuống dòng cho mỗi từ)</p>
                       <div className="flex gap-3">
-                        <textarea value={newWords} onChange={(e) => setNewWords(e.target.value)} rows={1} placeholder="Nhập từ (phân tách bằng dấu phẩy)..." className="flex-1 rounded-2xl bg-slate-950/70 border border-slate-700/80 px-4 py-3 outline-none focus:border-cyan-400" />
-                        <button onClick={() => addWordsToGroup()} className="bg-cyan-500 text-slate-950 rounded-2xl px-6 font-bold hover:bg-cyan-400 transition shadow-lg shadow-cyan-500/20">Thêm</button>
+                        <textarea value={newWords} onChange={(e) => setNewWords(e.target.value)} rows={2} placeholder="ví dụ:&#10;hello&#10;world" className="flex-1 rounded-2xl bg-slate-950/70 border border-slate-700/80 px-4 py-3 outline-none focus:border-cyan-400 text-sm leading-relaxed" />
+                        <button onClick={() => addWordsToGroup()} className="bg-cyan-500 text-slate-950 rounded-2xl px-6 font-bold hover:bg-cyan-400 transition shadow-lg shadow-cyan-500/20 h-[fit-content] py-4 self-end">Thêm</button>
                       </div>
                     </div>
 
@@ -455,19 +457,20 @@ export default function Home() {
                             <span className="text-lg font-medium">{word}</span>
                           </div>
                           <div className="flex gap-2">
-                            <button onClick={() => playAudio(word, ttsVoice)} className="p-3 bg-white/5 hover:bg-white/10 rounded-xl transition">🔊</button>
-                            <button onClick={() => deleteWord(selectedGroup.id, idx)} className="p-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition">🗑️</button>
+                            <button onClick={() => playAudio(word, ttsVoice)} className="p-3 bg-white/5 hover:bg-white/10 rounded-xl transition" title="Nghe">🔊</button>
+                            <button onClick={() => deleteWord(selectedGroup.id, idx)} className="p-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition" title="Xóa">🗑️</button>
                           </div>
                         </div>
                       ))}
                       {selectedGroup.words.length === 0 && (
-                        <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-3xl text-slate-500">Chưa có từ nào trong nhóm này.</div>
+                        <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-3xl text-slate-500 italic">Chưa có từ nào. Hãy thêm từ hoặc tra cứu ở tab bên kia!</div>
                       )}
                     </div>
                   </div>
                 ) : (
-                  <div className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-xl backdrop-blur-xl flex items-center justify-center min-h-[600px] text-slate-500">
-                    Chọn một nhóm ở bên trái để bắt đầu quản lý.
+                  <div className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-xl backdrop-blur-xl flex flex-col items-center justify-center min-h-[600px] text-slate-500">
+                    <div className="text-6xl mb-4">👈</div>
+                    <p className="text-lg">Vui lòng chọn một nhóm ở bên trái để bắt đầu.</p>
                   </div>
                 )}
               </section>
@@ -475,27 +478,25 @@ export default function Home() {
               {/* Right: Settings & Export */}
               <aside className="space-y-6">
                 <div className="rounded-[32px] border border-white/10 bg-slate-950/80 p-6 shadow-2xl backdrop-blur-xl sticky top-6">
-                  <h3 className="text-xl font-bold mb-6 text-cyan-400">Cấu hình & Xuất</h3>
-
+                  <h3 className="text-xl font-bold mb-6 text-cyan-400 border-b border-white/10 pb-4">Xuất âm thanh</h3>
+                  
                   <div className="space-y-6">
                     <div className="space-y-2">
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ngôn ngữ TTS</p>
-                      <select value={ttsVoice} onChange={(e) => setTtsVoice(e.target.value)} className="w-full rounded-xl bg-slate-900 border border-slate-700 px-4 py-3 outline-none focus:border-cyan-400 text-sm">
+                      <select value={ttsVoice} onChange={(e) => setTtsVoice(e.target.value)} className="w-full rounded-xl bg-slate-900 border border-slate-700 px-4 py-3 outline-none focus:border-cyan-400 text-sm appearance-none cursor-pointer">
                         {voices.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
                       </select>
                     </div>
 
                     <div className="space-y-2">
                       <div className="flex justify-between">
-                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Khoảng nghỉ</p>
-                        <span className="text-xs font-bold text-cyan-400">{pauseSeconds}s</span>
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nghỉ giữa các từ</p>
+                        <span className="text-xs font-bold text-cyan-400">{pauseSeconds} giây</span>
                       </div>
                       <input type="range" min="1" max="10" value={pauseSeconds} onChange={(e) => setPauseSeconds(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
                     </div>
 
-                    <hr className="border-white/5" />
-
-                    <div className="space-y-3">
+                    <div className="space-y-3 pt-2">
                       <label className="flex items-center justify-between cursor-pointer group">
                         <span className="text-sm text-slate-300">Bao gồm nghĩa Việt</span>
                         <div className={`w-10 h-5 rounded-full transition relative ${includeDefinition ? 'bg-cyan-500' : 'bg-slate-700'}`}>
@@ -504,7 +505,7 @@ export default function Home() {
                         </div>
                       </label>
                       <label className="flex items-center justify-between cursor-pointer group">
-                        <span className="text-sm text-slate-300">Dịch tự động</span>
+                        <span className="text-sm text-slate-300">Dịch từ sang TTS</span>
                         <div className={`w-10 h-5 rounded-full transition relative ${autoTranslate ? 'bg-cyan-500' : 'bg-slate-700'}`}>
                           <input type="checkbox" checked={autoTranslate} onChange={(e) => setAutoTranslate(e.target.checked)} className="hidden" />
                           <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${autoTranslate ? 'left-6' : 'left-1'}`} />
@@ -512,18 +513,20 @@ export default function Home() {
                       </label>
                     </div>
 
-                    <button onClick={createZip} disabled={processing} className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95">
-                      {processing ? 'ĐANG XỬ LÝ...' : 'XUẤT ZIP ÂM THANH'}
-                    </button>
-
-                    {downloadUrl && (
-                      <a href={downloadUrl} download="audio-package.zip" className="block text-center w-full bg-white/10 text-white rounded-2xl py-3 text-sm font-semibold hover:bg-white/20 transition">
-                        📥 Tải về ngay
-                      </a>
-                    )}
-
+                    <div className="pt-4 space-y-3">
+                      <button onClick={createZip} disabled={processing || !selectedGroup} className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95 uppercase">
+                        {processing ? 'Đang tạo âm thanh...' : `Tải nhóm: ${selectedGroup?.name || '---'}`}
+                      </button>
+                      
+                      {downloadUrl && (
+                        <a href={downloadUrl} download={`${normalizeFileName(selectedGroup?.name || 'audio')}.zip`} className="block text-center w-full bg-white/10 text-white rounded-2xl py-4 text-sm font-bold hover:bg-white/20 transition animate-pulse">
+                          📥 Click để tải File .ZIP
+                        </a>
+                      )}
+                    </div>
+                    
                     <div className="min-h-[20px]">
-                      <p className="text-[10px] text-center text-cyan-400 font-bold uppercase tracking-tighter">{status}</p>
+                      <p className="text-[10px] text-center text-cyan-400 font-bold uppercase tracking-tight leading-tight">{status}</p>
                     </div>
                   </div>
                 </div>
