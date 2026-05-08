@@ -1,7 +1,7 @@
 'use client';
 
 import JSZip from 'jszip';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 interface Message {
   id: string;
@@ -147,11 +147,31 @@ export default function Home() {
   const [ttsVoice, setTtsVoice] = useState('en-US');
   const [status, setStatus] = useState('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [combinedOnlyUrl, setCombinedOnlyUrl] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [pauseSeconds, setPauseSeconds] = useState(3);
   const [includeDefinition, setIncludeDefinition] = useState(false);
   const [autoTranslate, setAutoTranslate] = useState(false);
   const [downloadAll, setDownloadAll] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  // Persistence logic
+  useEffect(() => {
+    const savedGroups = localStorage.getItem('tts-groups');
+    if (savedGroups) {
+      try {
+        const parsed = JSON.parse(savedGroups);
+        setGroups(parsed);
+        if (parsed.length > 0) setSelectedGroupId(parsed[0].id);
+      } catch (e) {
+        console.error('Lỗi khi tải dữ liệu đã lưu:', e);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('tts-groups', JSON.stringify(groups));
+  }, [groups]);
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -261,7 +281,7 @@ export default function Home() {
     setStatus(`Đã thêm ${parsed.length} từ vào nhóm “${selectedGroup.name}”.`);
   };
 
-  const createZip = async () => {
+  const createZip = async (mode: 'zip' | 'combined-only' = 'zip') => {
     const targets = downloadAll ? groups : (selectedGroup ? [selectedGroup] : []);
     
     if (targets.length === 0) {
@@ -272,9 +292,13 @@ export default function Home() {
     setProcessing(true);
     setStatus('Đang bắt đầu...');
     setDownloadUrl(null);
+    setCombinedOnlyUrl(null);
+    setProgress(0);
 
     try {
       const zip = new JSZip();
+      const totalWords = targets.reduce((sum, g) => sum + g.words.length, 0);
+      let processedWords = 0;
 
       for (const group of targets) {
         if (group.words.length === 0) continue;
@@ -300,6 +324,8 @@ export default function Home() {
             }
           }
 
+          processedWords++;
+          setProgress(Math.round((processedWords / totalWords) * 90));
           setStatus(`${group.name}: ${i + 1}/${group.words.length} - ${rawWord}`);
           
           const wordBlob = await fetchSpeechBlob(wordToSpeak, ttsVoice);
@@ -330,13 +356,23 @@ export default function Home() {
         if (allBuffers.length > 0) {
           const merged = joinAudioBuffers(allBuffers, pauseSeconds);
           const combinedBlob = audioBufferToWav(merged);
-          folder.file('0. Combined.wav', combinedBlob);
+          
+          if (mode === 'combined-only' && !downloadAll) {
+            setCombinedOnlyUrl(URL.createObjectURL(combinedBlob));
+          } else {
+            folder.file('0. Combined.wav', combinedBlob);
+          }
         }
       }
 
-      setStatus('Đang nén ZIP...');
-      const content = await zip.generateAsync({ type: 'blob' });
-      setDownloadUrl(URL.createObjectURL(content));
+      if (mode === 'zip' || downloadAll) {
+        setStatus('Đang nén ZIP...');
+        setProgress(95);
+        const content = await zip.generateAsync({ type: 'blob' });
+        setDownloadUrl(URL.createObjectURL(content));
+      }
+
+      setProgress(100);
       setStatus('Hoàn thành! Nhấn tải về.');
     } catch (error) {
       console.error(error);
@@ -411,10 +447,10 @@ export default function Home() {
                   <h3 className="text-lg font-semibold mb-4">Danh sách nhóm</h3>
                   <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2">
                     {groups.map((group) => (
-                      <button
+                      <div
                         key={group.id}
                         onClick={() => setSelectedGroupId(group.id)}
-                        className={`w-full p-4 rounded-2xl text-left transition relative group ${selectedGroupId === group.id ? 'bg-cyan-500 text-slate-950 font-bold' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+                        className={`w-full p-4 rounded-2xl text-left transition relative group cursor-pointer ${selectedGroupId === group.id ? 'bg-cyan-500 text-slate-950 font-bold' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
                       >
                         <div className="truncate pr-6">{group.name}</div>
                         <div className={`text-[10px] mt-1 ${selectedGroupId === group.id ? 'text-slate-900' : 'text-slate-500'}`}>{group.words.length} từ</div>
@@ -422,7 +458,7 @@ export default function Home() {
                           onClick={(e) => { e.stopPropagation(); deleteGroup(group.id); }} 
                           className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-red-500/20 transition opacity-0 group-hover:opacity-100`}
                         >🗑️</button>
-                      </button>
+                      </div>
                     ))}
                     <div className="pt-4 border-t border-white/5 mt-4">
                       <input value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Tên nhóm mới..." className="w-full bg-transparent border-b border-slate-700 px-2 py-2 outline-none focus:border-cyan-400 text-sm mb-3" />
@@ -481,6 +517,21 @@ export default function Home() {
                   <h3 className="text-xl font-bold mb-6 text-cyan-400 border-b border-white/10 pb-4">Xuất âm thanh</h3>
                   
                   <div className="space-y-6">
+                    {processing && (
+                      <div className="space-y-2 animate-in fade-in slide-in-from-top-4 duration-500">
+                        <div className="flex justify-between text-[10px] font-bold text-cyan-400 uppercase tracking-widest">
+                          <span>Đang xử lý...</span>
+                          <span>{progress}%</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden border border-white/5">
+                          <div 
+                            className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all duration-300 ease-out shadow-[0_0_10px_rgba(34,211,238,0.5)]" 
+                            style={{ width: `${progress}%` }} 
+                          />
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-2">
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ngôn ngữ TTS</p>
                       <select value={ttsVoice} onChange={(e) => setTtsVoice(e.target.value)} className="w-full rounded-xl bg-slate-900 border border-slate-700 px-4 py-3 outline-none focus:border-cyan-400 text-sm appearance-none cursor-pointer">
@@ -496,7 +547,7 @@ export default function Home() {
                       <input type="range" min="1" max="10" value={pauseSeconds} onChange={(e) => setPauseSeconds(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
                     </div>
 
-                    <div className="space-y-3 pt-2">
+                    <div className="space-y-3 pt-2 border-t border-white/5 mt-4">
                       <label className="flex items-center justify-between cursor-pointer group">
                         <span className="text-sm text-slate-300">Bao gồm nghĩa Việt</span>
                         <div className={`w-10 h-5 rounded-full transition relative ${includeDefinition ? 'bg-cyan-500' : 'bg-slate-700'}`}>
@@ -521,13 +572,25 @@ export default function Home() {
                     </div>
 
                     <div className="pt-4 space-y-3">
-                      <button onClick={createZip} disabled={processing || (!downloadAll && !selectedGroup)} className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95 uppercase">
-                        {processing ? 'Đang tạo âm thanh...' : (downloadAll ? 'TẢI TẤT CẢ NHÓM' : `TẢI NHÓM: ${selectedGroup?.name || '---'}`)}
+                      <button onClick={() => createZip('zip')} disabled={processing || (!downloadAll && !selectedGroup)} className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95 uppercase">
+                        {processing ? 'Đang xử lý...' : (downloadAll ? 'TẢI TẤT CẢ (ZIP)' : `TẢI NHÓM (ZIP)`)}
                       </button>
+
+                      {!downloadAll && selectedGroup && (
+                        <button onClick={() => createZip('combined-only')} disabled={processing} className="w-full bg-white/5 border border-white/10 text-white rounded-2xl py-4 font-bold text-xs hover:bg-white/10 transition-all active:scale-95 uppercase">
+                          Tải Audio Ghép
+                        </button>
+                      )}
                       
                       {downloadUrl && (
-                        <a href={downloadUrl} download={downloadAll ? "all-groups.zip" : `${normalizeFileName(selectedGroup?.name || 'audio')}.zip`} className="block text-center w-full bg-white/10 text-white rounded-2xl py-4 text-sm font-bold hover:bg-white/20 transition animate-pulse">
-                          📥 Click để tải File .ZIP
+                        <a href={downloadUrl} download={downloadAll ? "all-groups.zip" : `${normalizeFileName(selectedGroup?.name || 'audio')}.zip`} className="block text-center w-full bg-cyan-500/20 text-cyan-200 border border-cyan-500/30 rounded-2xl py-4 text-sm font-bold hover:bg-cyan-500/30 transition animate-pulse">
+                          📥 Tải File .ZIP
+                        </a>
+                      )}
+
+                      {combinedOnlyUrl && (
+                        <a href={combinedOnlyUrl} download={`${normalizeFileName(selectedGroup?.name || 'combined')}_combined.wav`} className="block text-center w-full bg-white/10 text-white rounded-2xl py-4 text-sm font-bold hover:bg-white/20 transition animate-pulse">
+                          📥 Tải Audio Ghép (.wav)
                         </a>
                       )}
                     </div>
