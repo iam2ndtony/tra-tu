@@ -15,12 +15,20 @@ interface Group {
   words: string[];
 }
 
+interface PreviewResult {
+  word: string;
+  meanings: string;
+  ipa: string;
+  type: string;
+}
+
 const voices = [
   { label: 'English (US)', value: 'en-US' },
   { label: 'English (UK)', value: 'en-GB' },
   { label: 'Chinese (Mandarin)', value: 'zh-CN' },
   { label: 'Vietnamese', value: 'vi-VN' },
 ];
+
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -154,6 +162,8 @@ export default function Home() {
   const [autoTranslate, setAutoTranslate] = useState(false);
   const [downloadAll, setDownloadAll] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [editingId, setEditingId] = useState<{ msgId: string, lineIdx: number } | null>(null);
+  const [onlyCombined, setOnlyCombined] = useState(false);
 
   // Persistence logic
   useEffect(() => {
@@ -227,7 +237,7 @@ export default function Home() {
         body: JSON.stringify({ words }),
       });
       const data = await response.json();
-      
+
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'bot',
@@ -243,6 +253,16 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleUpdateMessage = (msgId: string, lineIdx: number, parts: string[]) => {
+    setMessages((prev) => prev.map((msg) => {
+      if (msg.id !== msgId) return msg;
+      const lines = msg.content.split('\n');
+      lines[lineIdx] = parts.join(',');
+      return { ...msg, content: lines.join('\n') };
+    }));
+    setEditingId(null);
   };
 
   const createGroup = () => {
@@ -283,7 +303,7 @@ export default function Home() {
 
   const createZip = async (mode: 'zip' | 'combined-only' = 'zip') => {
     const targets = downloadAll ? groups : (selectedGroup ? [selectedGroup] : []);
-    
+
     if (targets.length === 0) {
       setStatus(downloadAll ? 'Chưa có nhóm nào để tải.' : 'Vui lòng chọn nhóm cần tải.');
       return;
@@ -302,7 +322,7 @@ export default function Home() {
 
       for (const group of targets) {
         if (group.words.length === 0) continue;
-        
+
         const folder = zip.folder(normalizeFileName(group.name)) || zip;
         const allBuffers: AudioBuffer[] = [];
 
@@ -320,18 +340,21 @@ export default function Home() {
             });
             const data = await res.json();
             if (data.results && data.results[0]) {
-              wordToSpeak = data.results[0].split(',')[1] || rawWord; 
+              wordToSpeak = data.results[0].split(',')[1] || rawWord;
             }
           }
 
           processedWords++;
           setProgress(Math.round((processedWords / totalWords) * 90));
           setStatus(`${group.name}: ${i + 1}/${group.words.length} - ${rawWord}`);
-          
+
           const wordBlob = await fetchSpeechBlob(wordToSpeak, ttsVoice);
           const wordBuffer = await decodeAudioBuffer(wordBlob);
           allBuffers.push(wordBuffer);
-          folder.file(`${i + 1}. ${normalizeFileName(fileName)}.mp3`, wordBlob);
+
+          if (mode !== 'combined-only') {
+            folder.file(`${i + 1}. ${normalizeFileName(fileName)}.mp3`, wordBlob);
+          }
 
           if (includeDefinition) {
             const res = await fetch('/api/lookup', {
@@ -346,7 +369,9 @@ export default function Home() {
                 const defBlob = await fetchSpeechBlob(definition, 'vi-VN');
                 const defBuffer = await decodeAudioBuffer(defBlob);
                 allBuffers.push(defBuffer);
-                folder.file(`${i + 1}. ${normalizeFileName(fileName)}_definition.mp3`, defBlob);
+                if (mode !== 'combined-only') {
+                  folder.file(`${i + 1}. ${normalizeFileName(fileName)}_definition.mp3`, defBlob);
+                }
               }
             }
           }
@@ -356,7 +381,7 @@ export default function Home() {
         if (allBuffers.length > 0) {
           const merged = joinAudioBuffers(allBuffers, pauseSeconds);
           const combinedBlob = audioBufferToWav(merged);
-          
+
           if (mode === 'combined-only' && !downloadAll) {
             setCombinedOnlyUrl(URL.createObjectURL(combinedBlob));
           } else {
@@ -409,18 +434,100 @@ export default function Home() {
                     <button type="submit" disabled={loading} className="rounded-full bg-cyan-500 px-10 py-4 font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition shadow-lg shadow-cyan-500/20">{loading ? 'Đang tra...' : 'Tra cứu ngay'}</button>
                   </form>
                 </div>
+
                 <div className="space-y-4">
                   {messages.filter(m => m.type === 'bot').map((msg) => (
                     <div key={msg.id} className="space-y-4">
-                      {msg.content.split('\n').map((line, i) => (
-                        <div key={i} className="rounded-3xl bg-slate-950/70 p-6 border border-white/5 shadow-lg group">
-                          <p className="text-slate-200 text-lg leading-relaxed mb-4">{line}</p>
-                          <div className="flex gap-3">
-                            <button onClick={() => playAudio(line.split(',')[0], ttsVoice)} className="px-5 py-2 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition flex items-center gap-2">🔊 Nghe phát âm</button>
-                            <button onClick={() => addWordsToGroup([line.split(',')[0]])} className="px-5 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 rounded-full text-sm font-medium transition flex items-center gap-2">➕ Thêm từ vào nhóm</button>
+                      {msg.content.split('\n').map((line, i) => {
+                        const parts = line.split(',');
+                        const word = parts[0];
+                        const meanings = parts[1];
+                        const ipa = parts[2];
+                        const type = parts[3];
+                        const isError = meanings?.includes('(error)');
+                        const isEditing = editingId?.msgId === msg.id && editingId?.lineIdx === i;
+
+                        return (
+                          <div key={i} className="rounded-3xl bg-slate-950/70 p-6 border border-white/5 shadow-lg group transition hover:border-cyan-500/30">
+                            <div className="flex flex-col gap-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  {isEditing ? (
+                                    <input
+                                      autoFocus
+                                      defaultValue={word}
+                                      className="bg-transparent border-b border-cyan-500 text-2xl font-bold text-white outline-none"
+                                      onBlur={(e) => {
+                                        const newParts = [...parts];
+                                        newParts[0] = e.target.value;
+                                        handleUpdateMessage(msg.id, i, newParts);
+                                      }}
+                                    />
+                                  ) : (
+                                    <span className="text-2xl font-bold text-white">{word}</span>
+                                  )}
+
+                                  {isEditing ? (
+                                    <input
+                                      defaultValue={type}
+                                      className="bg-slate-800 rounded-md px-2 py-0.5 text-[10px] text-slate-400 font-bold uppercase outline-none"
+                                      onBlur={(e) => {
+                                        const newParts = [...parts];
+                                        newParts[3] = e.target.value;
+                                        handleUpdateMessage(msg.id, i, newParts);
+                                      }}
+                                    />
+                                  ) : (
+                                    type && <span className="px-2 py-0.5 rounded-md bg-slate-800 text-[10px] text-slate-400 font-bold uppercase tracking-wider">{type}</span>
+                                  )}
+
+                                  {isEditing ? (
+                                    <input
+                                      defaultValue={ipa}
+                                      className="text-sm text-cyan-400/60 font-mono bg-transparent border-b border-cyan-500/30 outline-none"
+                                      onBlur={(e) => {
+                                        const newParts = [...parts];
+                                        newParts[2] = e.target.value;
+                                        handleUpdateMessage(msg.id, i, newParts);
+                                      }}
+                                    />
+                                  ) : (
+                                    ipa && <span className="text-sm text-cyan-400/60 font-mono">{ipa}</span>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => setEditingId(isEditing ? null : { msgId: msg.id, lineIdx: i })}
+                                  className="p-2 rounded-full hover:bg-white/10 transition opacity-0 group-hover:opacity-100"
+                                >
+                                  {isEditing ? '✅' : '✏️'}
+                                </button>
+                              </div>
+
+                              {isEditing ? (
+                                <textarea
+                                  defaultValue={meanings}
+                                  rows={2}
+                                  className="w-full bg-slate-900/50 border border-cyan-500/30 rounded-2xl px-4 py-3 text-slate-200 text-lg outline-none focus:border-cyan-500"
+                                  onBlur={(e) => {
+                                    const newParts = [...parts];
+                                    newParts[1] = e.target.value;
+                                    handleUpdateMessage(msg.id, i, newParts);
+                                  }}
+                                />
+                              ) : (
+                                <p className={`${isError ? 'text-red-400' : 'text-slate-200'} text-lg leading-relaxed`}>
+                                  {meanings}
+                                </p>
+                              )}
+
+                              <div className="flex gap-3 pt-2">
+                                <button onClick={() => playAudio(word, ttsVoice)} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 rounded-full text-sm font-semibold transition flex items-center gap-2">🔊 Nghe</button>
+                                <button onClick={() => addWordsToGroup([word])} className="px-5 py-2.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-200 rounded-full text-sm font-semibold transition flex items-center gap-2">➕ Thêm vào nhóm</button>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ))}
                   {messages.length === 0 && <div className="text-center py-20 text-slate-500 italic">Nhập danh sách từ ở trên để bắt đầu tra cứu...</div>}
@@ -454,8 +561,8 @@ export default function Home() {
                       >
                         <div className="truncate pr-6">{group.name}</div>
                         <div className={`text-[10px] mt-1 ${selectedGroupId === group.id ? 'text-slate-900' : 'text-slate-500'}`}>{group.words.length} từ</div>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); deleteGroup(group.id); }} 
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteGroup(group.id); }}
                           className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-red-500/20 transition opacity-0 group-hover:opacity-100`}
                         >🗑️</button>
                       </div>
@@ -515,7 +622,7 @@ export default function Home() {
               <aside className="space-y-6">
                 <div className="rounded-[32px] border border-white/10 bg-slate-950/80 p-6 shadow-2xl backdrop-blur-xl sticky top-6">
                   <h3 className="text-xl font-bold mb-6 text-cyan-400 border-b border-white/10 pb-4">Xuất âm thanh</h3>
-                  
+
                   <div className="space-y-6">
                     {processing && (
                       <div className="space-y-2 animate-in fade-in slide-in-from-top-4 duration-500">
@@ -524,9 +631,9 @@ export default function Home() {
                           <span>{progress}%</span>
                         </div>
                         <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden border border-white/5">
-                          <div 
-                            className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all duration-300 ease-out shadow-[0_0_10px_rgba(34,211,238,0.5)]" 
-                            style={{ width: `${progress}%` }} 
+                          <div
+                            className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all duration-300 ease-out shadow-[0_0_10px_rgba(34,211,238,0.5)]"
+                            style={{ width: `${progress}%` }}
                           />
                         </div>
                       </div>
@@ -563,7 +670,14 @@ export default function Home() {
                         </div>
                       </label>
                       <label className="flex items-center justify-between cursor-pointer group">
-                        <span className="text-sm text-slate-300 font-bold text-cyan-400">Tải tất cả nhóm</span>
+                        <span className="text-sm text-slate-300">Chỉ tải Audio Ghép</span>
+                        <div className={`w-10 h-5 rounded-full transition relative ${onlyCombined ? 'bg-cyan-500' : 'bg-slate-700'}`}>
+                          <input type="checkbox" checked={onlyCombined} onChange={(e) => setOnlyCombined(e.target.checked)} className="hidden" />
+                          <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${onlyCombined ? 'left-6' : 'left-1'}`} />
+                        </div>
+                      </label>
+                      <label className="flex items-center justify-between cursor-pointer group">
+                        <span className="text-sm text-slate-300">Tải tất cả nhóm</span>
                         <div className={`w-10 h-5 rounded-full transition relative ${downloadAll ? 'bg-cyan-500' : 'bg-slate-700'}`}>
                           <input type="checkbox" checked={downloadAll} onChange={(e) => setDownloadAll(e.target.checked)} className="hidden" />
                           <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${downloadAll ? 'left-6' : 'left-1'}`} />
@@ -572,16 +686,18 @@ export default function Home() {
                     </div>
 
                     <div className="pt-4 space-y-3">
-                      <button onClick={() => createZip('zip')} disabled={processing || (!downloadAll && !selectedGroup)} className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95 uppercase">
-                        {processing ? 'Đang xử lý...' : (downloadAll ? 'TẢI TẤT CẢ (ZIP)' : `TẢI NHÓM (ZIP)`)}
+                      <button
+                        onClick={() => createZip(onlyCombined ? 'combined-only' : 'zip')}
+                        disabled={processing || (!downloadAll && !selectedGroup)}
+                        className="w-full bg-cyan-500 text-slate-950 rounded-2xl py-4 font-black text-sm hover:bg-cyan-400 shadow-xl shadow-cyan-500/20 disabled:opacity-50 transition-all active:scale-95 uppercase"
+                      >
+                        {processing ? 'Đang xử lý...' : (
+                          onlyCombined
+                            ? (downloadAll ? 'TẢI AUDIO GHÉP TẤT CẢ' : 'TẢI AUDIO GHÉP')
+                            : (downloadAll ? 'TẢI TẤT CẢ (ZIP)' : 'TẠO FILE ZIP')
+                        )}
                       </button>
 
-                      {!downloadAll && selectedGroup && (
-                        <button onClick={() => createZip('combined-only')} disabled={processing} className="w-full bg-white/5 border border-white/10 text-white rounded-2xl py-4 font-bold text-xs hover:bg-white/10 transition-all active:scale-95 uppercase">
-                          Tải Audio Ghép
-                        </button>
-                      )}
-                      
                       {downloadUrl && (
                         <a href={downloadUrl} download={downloadAll ? "all-groups.zip" : `${normalizeFileName(selectedGroup?.name || 'audio')}.zip`} className="block text-center w-full bg-cyan-500/20 text-cyan-200 border border-cyan-500/30 rounded-2xl py-4 text-sm font-bold hover:bg-cyan-500/30 transition animate-pulse">
                           📥 Tải File .ZIP
@@ -594,7 +710,7 @@ export default function Home() {
                         </a>
                       )}
                     </div>
-                    
+
                     <div className="min-h-[20px]">
                       <p className="text-[10px] text-center text-cyan-400 font-bold uppercase tracking-tight leading-tight">{status}</p>
                     </div>

@@ -1,0 +1,62 @@
+{
+  "in light of": {
+    "meaning": "bởi vì, xét về, trong bối cảnh của",
+    "ipa": "/ɪn laɪt əv/",
+    "type": "phrase"
+  },
+  "break a leg": {
+    "meaning": "chúc may mắn (thường dùng trong nghệ thuật)",
+    "ipa": "/breɪk ə leɡ/",
+    "type": "idiom"
+  },
+  "piece of cake": {
+    "meaning": "dễ như ăn cháo, rất dễ dàng",
+    "ipa": "/piːs əv keɪk/",
+    "type": "idiom"
+  },
+  "under the weather": {
+    "meaning": "cảm thấy không khỏe, bị ốm",
+    "ipa": "/ˈʌndər ðə ˈweðər/",
+    "type": "idiom"
+  },
+  "it's raining cats and dogs": {
+    "meaning": "mưa xối xả, mưa tầm tã",
+    "ipa": "/ɪts ˈreɪnɪŋ kæts ənd dɔːɡz/",
+    "type": "idiom"
+  },
+  "kick the bucket": {
+    "meaning": "qua đời, chết (ngôn ngữ lóng)",
+    "ipa": "/kɪk ðə ˈbʌkɪt/",
+    "type": "idiom"
+  },
+  "beat around the bush": {
+    "meaning": "nói vòng vo, không đi thẳng vào vấn đề",
+    "ipa": "/biːt əˈraʊnd ðə bʊʃ/",
+    "type": "idiom"
+  },
+  "cost an arm and a leg": {
+    "meaning": "rất đắt đỏ, tốn kém",
+    "ipa": "/kɔːst ən ɑːrm ənd ə leɡ/",
+    "type": "idiom"
+  },
+  "let the cat out of the bag": {
+    "meaning": "để lộ bí mật",
+    "ipa": "/let ðə kæt aʊt əv ðə bæɡ/",
+    "type": "idiom"
+  },
+  "hit the sack": {
+    "meaning": "đi ngủ",
+    "ipa": "/hɪt ðə sæk/",
+    "type": "idiom"
+  },
+  "once in a blue moon": {
+    "meaning": "hiếm khi, năm thì mười họa",
+    "ipa": "/wʌns ɪn ə bluː muːn/",
+    "type": "idiom"
+  },
+  "the elephant in the room": {
+    "meaning": "vấn đề lớn hiển nhiên nhưng mọi người tránh né",
+    "ipa": "/ði ˈelɪfənt ɪn ðə ruːm/",
+    "type": "idiom"
+  }
+}
