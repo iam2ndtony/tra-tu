@@ -262,7 +262,6 @@ export default function Home() {
       lines[lineIdx] = parts.join(',');
       return { ...msg, content: lines.join('\n') };
     }));
-    setEditingId(null);
   };
 
   const createGroup = () => {
@@ -457,7 +456,11 @@ export default function Home() {
                                       autoFocus
                                       defaultValue={word}
                                       className="bg-transparent border-b border-cyan-500 text-2xl font-bold text-white outline-none"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') e.currentTarget.blur();
+                                      }}
                                       onBlur={(e) => {
+                                        if (e.target.value === word) return;
                                         const newParts = [...parts];
                                         newParts[0] = e.target.value;
                                         handleUpdateMessage(msg.id, i, newParts);
@@ -470,8 +473,12 @@ export default function Home() {
                                   {isEditing ? (
                                     <input
                                       defaultValue={type}
-                                      className="bg-slate-800 rounded-md px-2 py-0.5 text-[10px] text-slate-400 font-bold uppercase outline-none"
+                                      className="bg-slate-800 rounded-md px-2 py-0.5 text-[10px] text-slate-400 font-bold uppercase outline-none w-20"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') e.currentTarget.blur();
+                                      }}
                                       onBlur={(e) => {
+                                        if (e.target.value === type) return;
                                         const newParts = [...parts];
                                         newParts[3] = e.target.value;
                                         handleUpdateMessage(msg.id, i, newParts);
@@ -485,7 +492,11 @@ export default function Home() {
                                     <input
                                       defaultValue={ipa}
                                       className="text-sm text-cyan-400/60 font-mono bg-transparent border-b border-cyan-500/30 outline-none"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') e.currentTarget.blur();
+                                      }}
                                       onBlur={(e) => {
+                                        if (e.target.value === ipa) return;
                                         const newParts = [...parts];
                                         newParts[2] = e.target.value;
                                         handleUpdateMessage(msg.id, i, newParts);
@@ -497,7 +508,7 @@ export default function Home() {
                                 </div>
                                 <button
                                   onClick={() => setEditingId(isEditing ? null : { msgId: msg.id, lineIdx: i })}
-                                  className="p-2 rounded-full hover:bg-white/10 transition opacity-0 group-hover:opacity-100"
+                                  className={`p-2 rounded-full hover:bg-white/10 transition ${isEditing ? 'opacity-100 bg-cyan-500/20' : 'opacity-0 group-hover:opacity-100'}`}
                                 >
                                   {isEditing ? '✅' : '✏️'}
                                 </button>
@@ -509,6 +520,7 @@ export default function Home() {
                                   rows={2}
                                   className="w-full bg-slate-900/50 border border-cyan-500/30 rounded-2xl px-4 py-3 text-slate-200 text-lg outline-none focus:border-cyan-500"
                                   onBlur={(e) => {
+                                    if (e.target.value === meanings) return;
                                     const newParts = [...parts];
                                     newParts[1] = e.target.value;
                                     handleUpdateMessage(msg.id, i, newParts);
